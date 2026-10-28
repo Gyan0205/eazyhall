@@ -50,6 +50,17 @@ class RegisterRequest(BaseModel):
 # bookings and read audit logs. Faculty/Admin accounts are seeded or created by an admin.
 SELF_REGISTER_ROLES = ["Student"]
 
+VALID_ROLES = ["Admin", "Faculty", "Student"]
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=6, max_length=128)
+    role: str
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6, max_length=128)
+
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -165,11 +176,15 @@ def simulate_notification_dispatch(db_session_factory, tenant_id: int, user_id: 
     finally:
         db.close()
 
+def utc_iso(dt: datetime.datetime) -> str:
+    # All datetimes are stored as naive UTC; mark them as UTC for the client
+    return dt.isoformat() + "Z"
+
 def parse_client_datetime(value: str) -> datetime.datetime:
     """
-    Parses an ISO date-time from the client into a naive datetime.
-    Offset-aware values (e.g. '...Z' or '+05:30') are converted to UTC first
-    instead of having their offset silently dropped.
+    Parses an ISO date-time from the client into a naive UTC datetime.
+    Offset-aware values (e.g. '...Z' or '+05:30') are converted to UTC;
+    naive values are assumed to already be UTC.
     """
     dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is not None:
@@ -249,6 +264,60 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
 
     return {"message": "Registration successful", "username": new_user.username}
 
+@app.post("/api/auth/change-password")
+def change_password(req: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not auth.verify_password(req.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if req.current_password == req.new_password:
+        raise HTTPException(status_code=400, detail="New password must be different from the current one")
+
+    current_user.hashed_password = auth.get_password_hash(req.new_password)
+    db.commit()
+
+    audit.add_audit_log(
+        db=db,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        action="CHANGE_PASSWORD",
+        details={"username": current_user.username}
+    )
+    return {"message": "Password changed successfully"}
+
+# --- User management (Admin) ---
+@app.get("/api/users")
+def list_users(current_user: User = Depends(RequireRole(["Admin"])), db: Session = Depends(get_db)):
+    users = db.query(User).filter(User.tenant_id == current_user.tenant_id).order_by(User.role, User.username).all()
+    return [{"id": u.id, "username": u.username, "role": u.role} for u in users]
+
+@app.post("/api/users")
+def create_user(req: UserCreate, current_user: User = Depends(RequireRole(["Admin"])), db: Session = Depends(get_db)):
+    if req.role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail=f"Role must be one of: {', '.join(VALID_ROLES)}")
+
+    existing_user = db.query(User).filter(User.username == req.username, User.tenant_id == current_user.tenant_id).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already exists in this department")
+
+    # Admins can only create users inside their own department
+    new_user = User(
+        username=req.username,
+        hashed_password=auth.get_password_hash(req.password),
+        role=req.role,
+        tenant_id=current_user.tenant_id
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    audit.add_audit_log(
+        db=db,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        action="CREATE_USER",
+        details={"username": new_user.username, "role": new_user.role}
+    )
+    return {"id": new_user.id, "username": new_user.username, "role": new_user.role}
+
 # --- Resources ---
 @app.get("/api/resources")
 def get_resources(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -293,8 +362,8 @@ def get_bookings(current_user: User = Depends(get_current_user), db: Session = D
             "resource_type": b.resource.type,
             "user_id": b.user_id,
             "username": b.user.username,
-            "start_time": b.start_time.isoformat(),
-            "end_time": b.end_time.isoformat(),
+            "start_time": utc_iso(b.start_time),
+            "end_time": utc_iso(b.end_time),
             "purpose": b.purpose,
             "status": b.status
         })
@@ -315,6 +384,9 @@ def create_booking(req: BookingCreate, background_tasks: BackgroundTasks, curren
 
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail="Start time must be before end time")
+
+    if start_dt < datetime.datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Bookings can't start in the past")
 
     # Check for conflicts
     has_conflict = conflict.check_booking_conflict(db, req.resource_id, start_dt, end_dt)
@@ -368,8 +440,8 @@ def create_booking(req: BookingCreate, background_tasks: BackgroundTasks, curren
         "id": booking.id,
         "resource_id": booking.resource_id,
         "resource_name": resource.name,
-        "start_time": booking.start_time.isoformat(),
-        "end_time": booking.end_time.isoformat(),
+        "start_time": utc_iso(booking.start_time),
+        "end_time": utc_iso(booking.end_time),
         "status": booking.status
     }
 
@@ -409,7 +481,7 @@ def approve_booking(booking_id: int, background_tasks: BackgroundTasks, current_
     )
 
     # Background notification
-    msg = f"Your booking for {booking.resource.name} on {booking.start_time.strftime('%Y-%m-%d %H:%M')} has been approved."
+    msg = f"Your booking #{booking.id} for {booking.resource.name} has been approved."
     background_tasks.add_task(simulate_notification_dispatch, database.SessionLocal, booking.tenant_id, booking.user_id, msg)
 
     return {"message": "Booking approved successfully"}
@@ -436,7 +508,7 @@ def reject_booking(booking_id: int, background_tasks: BackgroundTasks, current_u
     )
 
     # Background notification
-    msg = f"Your booking for {booking.resource.name} on {booking.start_time.strftime('%Y-%m-%d %H:%M')} was rejected."
+    msg = f"Your booking #{booking.id} for {booking.resource.name} was rejected."
     background_tasks.add_task(simulate_notification_dispatch, database.SessionLocal, booking.tenant_id, booking.user_id, msg)
 
     return {"message": "Booking rejected successfully"}
@@ -484,7 +556,7 @@ def get_audit_logs(current_user: User = Depends(RequireRole(["Admin"])), db: Ses
     for l in logs:
         result.append({
             "id": l.id,
-            "timestamp": l.timestamp.isoformat() + "Z",  # stored as naive UTC
+            "timestamp": utc_iso(l.timestamp),
             "username": l.user.username if l.user else "System",
             "action": l.action,
             "details": l.details,
@@ -535,5 +607,5 @@ def get_notifications(current_user: User = Depends(get_current_user), db: Sessio
         "id": n.id,
         "message": n.message,
         "status": n.status,
-        "created_at": n.created_at.isoformat() + "Z",  # stored as naive UTC
+        "created_at": utc_iso(n.created_at),
     } for n in notifications]

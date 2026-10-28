@@ -73,6 +73,12 @@ function App() {
   const [showAddResource, setShowAddResource] = useState(false);
   const [newResource, setNewResource] = useState({ name: '', type: 'Lab', location: '', capacity: 10 });
   const [resourceError, setResourceError] = useState('');
+  // User management (Admin) and account settings
+  const [departmentUsers, setDepartmentUsers] = useState([]);
+  const [newUser, setNewUser] = useState({ username: '', password: '', role: 'Faculty' });
+  const [userMessage, setUserMessage] = useState({ type: '', text: '' });
+  const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
+  const [passwordMessage, setPasswordMessage] = useState({ type: '', text: '' });
   // Demo-only controls stay hidden until the backend confirms it's running in demo mode
   const [demoMode, setDemoMode] = useState(false);
 
@@ -175,6 +181,10 @@ function App() {
     setAuditLogs([]);
     setBookingError('');
     setBookingSuccess('');
+    setDepartmentUsers([]);
+    setUserMessage({ type: '', text: '' });
+    setPasswordForm({ current: '', next: '', confirm: '' });
+    setPasswordMessage({ type: '', text: '' });
     // Don't leave the previous user's credentials in the login form
     setUsername('');
     setPassword('');
@@ -293,8 +303,9 @@ function App() {
     }
 
     try {
-      const startIso = `${bookingForm.date}T${convertTimeTo24h(bookingForm.startTime)}`;
-      const endIso = `${bookingForm.date}T${convertTimeTo24h(bookingForm.endTime)}`;
+      // Interpret the picked slot in the user's timezone and send it as UTC
+      const startIso = new Date(`${bookingForm.date}T${convertTimeTo24h(bookingForm.startTime)}`).toISOString();
+      const endIso = new Date(`${bookingForm.date}T${convertTimeTo24h(bookingForm.endTime)}`).toISOString();
 
       const response = await authFetch('/bookings', {
         method: 'POST',
@@ -374,6 +385,63 @@ function App() {
       console.error(err);
     } finally {
       setLoadingAction(null);
+    }
+  };
+
+  const fetchDepartmentUsers = async () => {
+    try {
+      const response = await authFetch('/users');
+      if (response.ok) {
+        setDepartmentUsers(await response.json());
+      }
+    } catch (err) {
+      console.error("Failed to fetch users", err);
+    }
+  };
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    setUserMessage({ type: '', text: '' });
+    try {
+      const response = await authFetch('/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(errorMessage(data, "Failed to create user"));
+      }
+      setUserMessage({ type: 'success', text: `Created ${data.role} account "${data.username}". Share the password with them securely.` });
+      setNewUser({ username: '', password: '', role: newUser.role });
+      fetchDepartmentUsers();
+      fetchAuditLogs();
+    } catch (err) {
+      setUserMessage({ type: 'error', text: err.message });
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPasswordMessage({ type: '', text: '' });
+    if (passwordForm.next !== passwordForm.confirm) {
+      setPasswordMessage({ type: 'error', text: "New passwords don't match." });
+      return;
+    }
+    try {
+      const response = await authFetch('/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: passwordForm.current, new_password: passwordForm.next })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(errorMessage(data, "Failed to change password"));
+      }
+      setPasswordForm({ current: '', next: '', confirm: '' });
+      setPasswordMessage({ type: 'success', text: 'Password changed. Use the new password next time you sign in.' });
+    } catch (err) {
+      setPasswordMessage({ type: 'error', text: err.message });
     }
   };
 
@@ -698,6 +766,24 @@ function App() {
               Audit Ledger
             </button>
           )}
+          {user.role === 'Admin' && (
+            <button
+              onClick={() => { setActiveTab('users'); fetchDepartmentUsers(); }}
+              className={`btn ${activeTab === 'users' ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ justifyContent: 'flex-start', width: '100%' }}
+            >
+              <Users style={{ width: '18px', height: '18px' }} />
+              Manage Users
+            </button>
+          )}
+          <button
+            onClick={() => setActiveTab('account')}
+            className={`btn ${activeTab === 'account' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ justifyContent: 'flex-start', width: '100%' }}
+          >
+            <Lock style={{ width: '18px', height: '18px' }} />
+            Account
+          </button>
         </nav>
 
         {/* Logout */}
@@ -718,6 +804,8 @@ function App() {
               {activeTab === 'schedule' && "Campus Booking Schedules"}
               {activeTab === 'notifications' && "Asynchronous Notifications Drawer"}
               {activeTab === 'audit' && "Cryptographic Tamper-Evident Audit Ledger"}
+              {activeTab === 'users' && "Department Users"}
+              {activeTab === 'account' && "Account Settings"}
             </h1>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', marginTop: '4px' }}>
               {tenantCode === 'computing' ? 'School of Computing Portal' : 'Department of Athletics Portal'} | Role-Based Access Isolation
@@ -1142,6 +1230,92 @@ function App() {
               </div>
             </div>
 
+          </div>
+        )}
+
+        {/* TAB 5: MANAGE USERS (Admin Only) */}
+        {activeTab === 'users' && user.role === 'Admin' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '32px', alignItems: 'start' }}>
+            <div className="glass-panel" style={{ overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ background: 'hsla(var(--base-h), var(--base-s), 5%, 0.6)', borderBottom: '1px solid var(--border-card)' }}>
+                    <th style={{ padding: '16px 24px', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600' }}>USERNAME</th>
+                    <th style={{ padding: '16px 24px', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600' }}>ROLE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {departmentUsers.map((u) => (
+                    <tr key={u.id} style={{ borderBottom: '1px solid var(--border-card)' }}>
+                      <td style={{ padding: '14px 24px', fontWeight: '600' }}>
+                        {u.username}{u.id === user.id && <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}> (you)</span>}
+                      </td>
+                      <td style={{ padding: '14px 24px' }}>
+                        <span className={`badge ${u.role === 'Admin' ? 'badge-approved' : 'badge-pending'}`} style={{ fontSize: '0.65rem' }}>{u.role}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="glass-panel" style={{ padding: '32px' }}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '8px' }}>Add a User</h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
+                Create Faculty or Admin accounts for your department. Students can also sign themselves up.
+              </p>
+              {userMessage.text && (
+                <div style={{ background: userMessage.type === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: userMessage.type === 'success' ? 'var(--success)' : 'var(--error)', padding: '12px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.9rem' }}>
+                  {userMessage.text}
+                </div>
+              )}
+              <form onSubmit={handleCreateUser} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600', display: 'block', marginBottom: '6px' }}>USERNAME</label>
+                  <input type="text" value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} minLength={3} autoComplete="off" required />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600', display: 'block', marginBottom: '6px' }}>TEMPORARY PASSWORD</label>
+                  <input type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} minLength={6} autoComplete="new-password" required />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600', display: 'block', marginBottom: '6px' }}>ROLE</label>
+                  <select value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
+                    <option value="Faculty">Faculty (auto-approved bookings)</option>
+                    <option value="Admin">Admin (full department access)</option>
+                    <option value="Student">Student (bookings need approval)</option>
+                  </select>
+                </div>
+                <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Create Account</button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: ACCOUNT SETTINGS */}
+        {activeTab === 'account' && (
+          <div className="glass-panel" style={{ padding: '32px', maxWidth: '480px' }}>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '20px' }}>Change Password</h3>
+            {passwordMessage.text && (
+              <div style={{ background: passwordMessage.type === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: passwordMessage.type === 'success' ? 'var(--success)' : 'var(--error)', padding: '12px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.9rem' }}>
+                {passwordMessage.text}
+              </div>
+            )}
+            <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600', display: 'block', marginBottom: '6px' }}>CURRENT PASSWORD</label>
+                <input type="password" value={passwordForm.current} onChange={e => setPasswordForm({ ...passwordForm, current: e.target.value })} autoComplete="current-password" required />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600', display: 'block', marginBottom: '6px' }}>NEW PASSWORD</label>
+                <input type="password" value={passwordForm.next} onChange={e => setPasswordForm({ ...passwordForm, next: e.target.value })} minLength={6} autoComplete="new-password" required />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600', display: 'block', marginBottom: '6px' }}>CONFIRM NEW PASSWORD</label>
+                <input type="password" value={passwordForm.confirm} onChange={e => setPasswordForm({ ...passwordForm, confirm: e.target.value })} minLength={6} autoComplete="new-password" required />
+              </div>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Update Password</button>
+            </form>
           </div>
         )}
 

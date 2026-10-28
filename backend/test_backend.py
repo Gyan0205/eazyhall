@@ -71,8 +71,8 @@ class TestCampusBookingPlatform(unittest.TestCase):
         resources = client.get("/api/resources", headers={"Authorization": f"Bearer {comp_token}"}).json()
         lab_id = [r["id"] for r in resources if r["name"] == "Ada Lovelace Lab"][0]
 
-        # Create booking 1: 10:00 to 11:00 (Today)
-        now = datetime.datetime.utcnow().date()
+        # Create booking 1: 10:00 to 11:00 (Tomorrow, so it's never in the past)
+        now = datetime.datetime.utcnow().date() + datetime.timedelta(days=1)
         start1 = datetime.datetime.combine(now, datetime.time(10, 0)).isoformat()
         end1 = datetime.datetime.combine(now, datetime.time(11, 0)).isoformat()
 
@@ -204,6 +204,68 @@ class TestCampusBookingPlatform(unittest.TestCase):
         # Repair only re-seals the caller's tenant
         client.post("/api/audit/repair", headers=comp_admin)
         self.assertTrue(client.post("/api/audit/verify", headers=comp_admin).json()["valid"])
+
+    def test_booking_in_past_rejected(self):
+        """
+        Bookings that start in the past are rejected.
+        """
+        headers = {"Authorization": f"Bearer {self.get_token('fac_comp', 'faculty123', 'computing')}"}
+        resources = client.get("/api/resources", headers=headers).json()
+        lab_id = resources[0]["id"]
+        start = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
+        res = client.post("/api/bookings", headers=headers, json={
+            "resource_id": lab_id,
+            "start_time": start.isoformat() + "Z",
+            "end_time": (start + datetime.timedelta(hours=1)).isoformat() + "Z",
+            "purpose": "Too late"
+        })
+        self.assertEqual(res.status_code, 400)
+
+    def test_admin_creates_users_in_own_department(self):
+        """
+        Admins can create Faculty accounts in their own department only; others can't create users.
+        """
+        admin = {"Authorization": f"Bearer {self.get_token('admin_comp', 'admin123', 'computing')}"}
+        student = {"Authorization": f"Bearer {self.get_token('stud_comp', 'student123', 'computing')}"}
+        new_user = {"username": "prof_new", "password": "teach123", "role": "Faculty"}
+
+        self.assertEqual(client.post("/api/users", headers=student, json=new_user).status_code, 403)
+        self.assertEqual(client.post("/api/users", headers=admin, json={**new_user, "role": "Wizard"}).status_code, 400)
+
+        res = client.post("/api/users", headers=admin, json=new_user)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(client.post("/api/users", headers=admin, json=new_user).status_code, 400)  # duplicate
+
+        # New user signs in to Computing only
+        self.get_token("prof_new", "teach123", "computing")
+        res = client.post("/api/auth/login", json={"username": "prof_new", "password": "teach123", "tenant_code": "athletics"})
+        self.assertEqual(res.status_code, 400)
+
+        names = [u["username"] for u in client.get("/api/users", headers=admin).json()]
+        self.assertIn("prof_new", names)
+        self.assertNotIn("admin_ath", names)
+
+        # Clean up so the test can run again on the same database
+        db = database.SessionLocal()
+        db.query(models.User).filter(models.User.username == "prof_new").delete()
+        db.commit()
+        db.close()
+
+    def test_change_password(self):
+        """
+        Users can change their own password after confirming the current one.
+        """
+        headers = {"Authorization": f"Bearer {self.get_token('stud_ath', 'student123', 'athletics')}"}
+        wrong = client.post("/api/auth/change-password", headers=headers, json={"current_password": "nope", "new_password": "newpass123"})
+        self.assertEqual(wrong.status_code, 400)
+
+        ok = client.post("/api/auth/change-password", headers=headers, json={"current_password": "student123", "new_password": "newpass123"})
+        self.assertEqual(ok.status_code, 200)
+        self.get_token("stud_ath", "newpass123", "athletics")
+
+        # Restore the seeded password for other tests
+        headers = {"Authorization": f"Bearer {self.get_token('stud_ath', 'newpass123', 'athletics')}"}
+        client.post("/api/auth/change-password", headers=headers, json={"current_password": "newpass123", "new_password": "student123"})
 
 if __name__ == "__main__":
     unittest.main()
