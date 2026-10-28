@@ -4,6 +4,8 @@ services:
     name: eazyhall-api
     runtime: python
     plan: free
+    # Same region as the Neon database (AWS ap-southeast-1) to keep queries fast
+    region: singapore
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT

@@ -11,6 +11,9 @@ Do the steps in this order, because each step needs a URL from the one before.
 ## 1. Neon: create the database
 
 1. Sign up at neon.tech (signing in with GitHub is easiest) and create a project.
+   Turn on only **Postgres database**, and pick **AWS Asia Pacific 1 (Singapore)**, the same region
+   `render.yaml` uses for the backend. Skip Neon's "set up with the Neon CLI" instructions; they
+   aren't needed for this app.
 2. On the project dashboard, copy the **connection string**. It looks like
    `postgresql://user:password@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require`
 3. Keep it private: anyone with it can read and change your data.
