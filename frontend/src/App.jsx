@@ -73,6 +73,15 @@ function App() {
   const [showAddResource, setShowAddResource] = useState(false);
   const [newResource, setNewResource] = useState({ name: '', type: 'Lab', location: '', capacity: 10 });
   const [resourceError, setResourceError] = useState('');
+  // Demo-only controls stay hidden until the backend confirms it's running in demo mode
+  const [demoMode, setDemoMode] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/config`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(cfg => setDemoMode(Boolean(cfg?.demo_mode)))
+      .catch(() => setDemoMode(false));
+  }, []);
 
   // Fill demo credentials only when a role preset button is clicked
   const handlePreFill = (role, tenant) => {
@@ -558,6 +567,7 @@ function App() {
                 </div>
               </div>
 
+              {demoMode && (
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600', marginBottom: '8px' }}>DEMO ROLE PRESETS</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
@@ -574,6 +584,7 @@ function App() {
                   ))}
                 </div>
               </div>
+              )}
 
               <hr style={{ border: 'none', height: '1px', background: 'var(--border-card)' }} />
 
@@ -1031,6 +1042,8 @@ function App() {
                   <ShieldCheck style={{ width: '18px', height: '18px' }} />
                   {auditVerifyLoading ? 'Verifying Chain...' : 'Verify Audit Chain'}
                 </button>
+                {demoMode && (
+                <>
                 <button
                   onClick={handleSimulateTamper}
                   className="btn btn-secondary"
@@ -1047,6 +1060,8 @@ function App() {
                   <CheckCircle style={{ width: '18px', height: '18px' }} />
                   Heal Ledger Chain
                 </button>
+                </>
+                )}
               </div>
 
               {auditVerifyResult && (

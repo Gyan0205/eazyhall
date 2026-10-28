@@ -67,6 +67,8 @@ Backend (environment variables, see [`backend/.env.example`](backend/.env.exampl
 | `DATABASE_URL` | SQLAlchemy database URL | SQLite file in `backend/` |
 | `CORS_ORIGINS` | Comma-separated allowed frontend URLs | `*` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Login session length | `120` |
+| `DEMO_MODE` | Seed demo accounts and enable the tamper/heal demo tools | `true` |
+| `ADMIN_PASSWORD` | With `DEMO_MODE=false`, password for the auto-created `admin_<department>` accounts | none |
 
 Frontend (see [`frontend/.env.example`](frontend/.env.example)):
 
@@ -74,8 +76,8 @@ Frontend (see [`frontend/.env.example`](frontend/.env.example)):
 |---|---|---|
 | `VITE_API_BASE` | Backend API URL, baked in at build time | `http://127.0.0.1:8000/api` |
 
-## Notes before going to production
+## Deploying
 
-- The **Simulate Database Tampering** and **Heal Ledger Chain** buttons (`/api/audit/tamper`, `/api/audit/repair`) are demo features. Repair re-signs the chain, which would also hide real tampering, so disable both for a real deployment.
-- Demo accounts use well-known passwords. Change or remove them before going public.
-- SQLite is fine for demos. On hosts with ephemeral disks, use a hosted database through `DATABASE_URL`.
+See [DEPLOY.md](DEPLOY.md) for step-by-step hosting on Neon (Postgres), Render (backend) and Vercel (frontend).
+
+With `DEMO_MODE=false` (the setting in `render.yaml`), the demo accounts and the **Simulate Database Tampering** / **Heal Ledger Chain** tools are switched off, since their passwords are public and "heal" would hide real tampering.

@@ -16,6 +16,13 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Multi-Tenant Campus Resource Booking & Access Control Platform")
 
+# DEMO_MODE (default on) seeds demo accounts with well-known passwords and enables the
+# tamper/repair audit demo routes. Turn it off for any public deployment.
+DEMO_MODE = os.getenv("DEMO_MODE", "true").strip().lower() in ("1", "true", "yes")
+
+# In production, the initial Admin account of each department gets this password.
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+
 # CORS middleware config. Set CORS_ORIGINS to a comma-separated list of frontend URLs when hosting.
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
@@ -83,20 +90,21 @@ def seed_data():
             db.refresh(computing)
             db.refresh(athletics)
 
-            # 2. Create Users
-            users_data = [
-                # Computing users
-                ("admin_comp", "admin123", "Admin", computing.id),
-                ("fac_comp", "faculty123", "Faculty", computing.id),
-                ("stud_comp", "student123", "Student", computing.id),
-                # Athletics users
-                ("admin_ath", "admin123", "Admin", athletics.id),
-                ("fac_ath", "faculty123", "Faculty", athletics.id),
-                ("stud_ath", "student123", "Student", athletics.id),
-            ]
-            for username, pwd, role, t_id in users_data:
-                hashed = auth.get_password_hash(pwd)
-                db.add(User(username=username, hashed_password=hashed, role=role, tenant_id=t_id))
+            # 2. Create demo users (only in demo mode; their passwords are public)
+            if DEMO_MODE:
+                users_data = [
+                    # Computing users
+                    ("admin_comp", "admin123", "Admin", computing.id),
+                    ("fac_comp", "faculty123", "Faculty", computing.id),
+                    ("stud_comp", "student123", "Student", computing.id),
+                    # Athletics users
+                    ("admin_ath", "admin123", "Admin", athletics.id),
+                    ("fac_ath", "faculty123", "Faculty", athletics.id),
+                    ("stud_ath", "student123", "Student", athletics.id),
+                ]
+                for username, pwd, role, t_id in users_data:
+                    hashed = auth.get_password_hash(pwd)
+                    db.add(User(username=username, hashed_password=hashed, role=role, tenant_id=t_id))
 
             # 3. Create Resources
             resources_data = [
@@ -114,6 +122,24 @@ def seed_data():
 
             db.commit()
             print("Database seeded successfully.")
+
+        # Production: make sure every department has an admin, using ADMIN_PASSWORD
+        if not DEMO_MODE:
+            for tenant in db.query(Tenant).all():
+                has_admin = db.query(User).filter(User.tenant_id == tenant.id, User.role == "Admin").first()
+                if has_admin:
+                    continue
+                if not ADMIN_PASSWORD:
+                    print(f"WARNING: no admin for '{tenant.code}'. Set ADMIN_PASSWORD to create one.")
+                    continue
+                db.add(User(
+                    username=f"admin_{tenant.code}",
+                    hashed_password=auth.get_password_hash(ADMIN_PASSWORD),
+                    role="Admin",
+                    tenant_id=tenant.id
+                ))
+                print(f"Created admin account 'admin_{tenant.code}'.")
+            db.commit()
     except Exception as e:
         print(f"Error seeding database: {e}")
     finally:
@@ -149,6 +175,17 @@ def parse_client_datetime(value: str) -> datetime.datetime:
     if dt.tzinfo is not None:
         dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
     return dt
+
+def require_demo_mode():
+    # Hide demo-only routes entirely when DEMO_MODE is off
+    if not DEMO_MODE:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+# --- Public config ---
+@app.get("/api/config")
+def get_config():
+    # Lets the frontend hide demo-only controls in production
+    return {"demo_mode": DEMO_MODE}
 
 # --- Authentication ---
 @app.post("/api/auth/login", response_model=TokenResponse)
@@ -461,7 +498,7 @@ def verify_audit(current_user: User = Depends(RequireRole(["Admin"])), db: Sessi
     # Run the verification engine on this tenant's chain only
     return audit.verify_audit_chain(db, current_user.tenant_id)
 
-@app.post("/api/audit/tamper")
+@app.post("/api/audit/tamper", dependencies=[Depends(require_demo_mode)])
 def simulate_tampering(current_user: User = Depends(RequireRole(["Admin"])), db: Session = Depends(get_db)):
     """
     Simulates database tampering for demonstration/testing purposes.
@@ -478,7 +515,7 @@ def simulate_tampering(current_user: User = Depends(RequireRole(["Admin"])), db:
 
     return {"message": f"Successfully tampered with Log ID {last_log.id}. Try running the audit verification to witness the failure!"}
 
-@app.post("/api/audit/repair")
+@app.post("/api/audit/repair", dependencies=[Depends(require_demo_mode)])
 def repair_audit(current_user: User = Depends(RequireRole(["Admin"])), db: Session = Depends(get_db)):
     """
     Recalculates all SHA-256 hashes chronologically to fix/seal the ledger chain.
