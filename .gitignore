@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Local databases (re-created and seeded automatically on startup)
+*.db
+*.sqlite3
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Node / build output
+node_modules/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local Claude settings
+.claude/
