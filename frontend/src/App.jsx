@@ -499,7 +499,7 @@ function App() {
             ) : (
               <Activity style={{ width: '36px', height: '36px', color: 'var(--accent)' }} />
             )}
-            <h2 style={{ fontSize: '1.8rem', fontWeight: '800' }}>CAMPUS BOOKINGS</h2>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: '800' }}>EAZYHALL</h2>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginBottom: '24px' }}>
@@ -801,7 +801,7 @@ function App() {
           <div>
             <h1 style={{ fontSize: '2rem', fontWeight: '800' }}>
               {activeTab === 'resources' && "Resource Catalog & Booking"}
-              {activeTab === 'schedule' && "Campus Booking Schedules"}
+              {activeTab === 'schedule' && "EazyHall Booking Schedules"}
               {activeTab === 'notifications' && "Asynchronous Notifications Drawer"}
               {activeTab === 'audit' && "Cryptographic Tamper-Evident Audit Ledger"}
               {activeTab === 'users' && "Department Users"}

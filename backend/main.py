@@ -14,7 +14,7 @@ from auth import RequireRole, get_current_user
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Multi-Tenant Campus Resource Booking & Access Control Platform")
+app = FastAPI(title="EazyHall API")
 
 # DEMO_MODE (default on) seeds demo accounts with well-known passwords and enables the
 # tamper/repair audit demo routes. Turn it off for any public deployment.

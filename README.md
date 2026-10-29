@@ -1,6 +1,6 @@
-# Campus Resource Booking & Access Control Platform
+# EazyHall
 
-A multi-tenant booking system for campus facilities (labs, halls, courts, equipment) with role-based access, conflict detection, notifications, and a tamper-evident audit log.
+EazyHall is a multi-tenant booking system for campus facilities (labs, halls, courts, equipment) with role-based access, conflict detection, notifications, and a tamper-evident audit log.
 
 - **Backend:** FastAPI + SQLAlchemy (SQLite by default) in [`backend/`](backend)
 - **Frontend:** React + Vite in [`frontend/`](frontend)

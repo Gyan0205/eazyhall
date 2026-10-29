@@ -4,7 +4,7 @@ import unittest
 
 # Run tests against a throwaway database so they never wipe the real one.
 # Must be set before importing the app, which creates the engine on import.
-_TEST_DB = os.path.join(tempfile.mkdtemp(), "test_campus_booking.db")
+_TEST_DB = os.path.join(tempfile.mkdtemp(), "test_eazyhall.db")
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
 
 from fastapi.testclient import TestClient
@@ -18,7 +18,7 @@ seed_data()
 
 client = TestClient(app)
 
-class TestCampusBookingPlatform(unittest.TestCase):
+class TestEazyHall(unittest.TestCase):
     def setUp(self):
         # We can clean up bookings and audit logs to make tests reproducible,
         # but keep tenants, resources, and users seeded.

@@ -1,4 +1,4 @@
-# Deploying: Neon + Render + Vercel
+# Deploying EazyHall: Neon + Render + Vercel
 
 | Part | Service | What it hosts |
 |---|---|---|
