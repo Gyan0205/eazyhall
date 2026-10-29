@@ -12,7 +12,10 @@ EazyHall is a multi-tenant booking system for campus facilities (labs, halls, co
   - **Student:** bookings start as *Pending* and need admin approval.
   - **Faculty:** bookings are approved automatically.
   - **Admin:** manages resources, approves or rejects bookings, cancels any booking, and views the audit ledger.
-- **Conflict detection:** overlapping Pending or Approved bookings on the same resource are rejected with `409`.
+- **Rooms & facilities:** every room shows its seats, location, facilities and description; admins can edit them.
+- **Weekly timetable:** each room has a Mon–Sun timetable of its bookings (who, what, when). Click a free slot to book it.
+- **Conflict detection:** overlapping Pending or Approved bookings on the same resource are rejected with `409`. Bookings in the past are rejected.
+- **Light and dark themes:** pick light, dark, or follow the device setting. Works on desktop and phone screens.
 - **Audit ledger:** each department's actions are SHA-256 hash-chained, so editing a row directly in the database is detected by **Verify Audit Chain**.
 
 ## Running locally

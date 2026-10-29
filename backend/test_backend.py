@@ -267,5 +267,67 @@ class TestEazyHall(unittest.TestCase):
         headers = {"Authorization": f"Bearer {self.get_token('stud_ath', 'newpass123', 'athletics')}"}
         client.post("/api/auth/change-password", headers=headers, json={"current_password": "newpass123", "new_password": "student123"})
 
+    def test_resource_details_and_weekly_schedule(self):
+        """
+        Resources expose seats, facilities and description; the schedule endpoint
+        returns that room's bookings for a week, scoped to the user's department.
+        """
+        admin = {"Authorization": f"Bearer {self.get_token('admin_comp', 'admin123', 'computing')}"}
+        student = {"Authorization": f"Bearer {self.get_token('stud_comp', 'student123', 'computing')}"}
+        ath = {"Authorization": f"Bearer {self.get_token('stud_ath', 'student123', 'athletics')}"}
+
+        hall = [r for r in client.get("/api/resources", headers=student).json() if r["name"] == "Turing Seminar Hall"][0]
+        self.assertEqual(hall["capacity"], 100)
+        self.assertIn("Projector & screen", hall["facilities"])
+        self.assertTrue(hall["description"])
+
+        # Admin edits facilities (blank and duplicate entries are dropped)
+        res = client.put(f"/api/resources/{hall['id']}", headers=admin, json={
+            "name": hall["name"], "type": hall["type"], "location": hall["location"], "capacity": 120,
+            "facilities": ["Projector & screen", " ", "projector & screen", "Podium"], "description": "Updated"
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["facilities"], ["Projector & screen", "Podium"])
+        self.assertEqual(client.put(f"/api/resources/{hall['id']}", headers=student, json=res.json()).status_code, 403)
+
+        # Book it next week and read the week's timetable
+        day = datetime.datetime.utcnow().date() + datetime.timedelta(days=7)
+        start = datetime.datetime.combine(day, datetime.time(9, 0))
+        booked = client.post("/api/bookings", headers=admin, json={
+            "resource_id": hall["id"], "start_time": start.isoformat() + "Z",
+            "end_time": (start + datetime.timedelta(hours=2)).isoformat() + "Z", "purpose": "Department meeting"
+        })
+        self.assertEqual(booked.status_code, 200)
+        week_start = datetime.datetime.combine(day - datetime.timedelta(days=day.weekday()), datetime.time())
+        params = {"start": week_start.isoformat() + "Z", "end": (week_start + datetime.timedelta(days=7)).isoformat() + "Z"}
+        schedule = client.get(f"/api/resources/{hall['id']}/schedule", headers=student, params=params).json()
+        self.assertEqual([b["purpose"] for b in schedule], ["Department meeting"])
+        self.assertEqual(schedule[0]["username"], "admin_comp")
+
+        # Another department can't see this room
+        self.assertEqual(client.get(f"/api/resources/{hall['id']}/schedule", headers=ath, params=params).status_code, 404)
+
+        # Restore seeded values for other tests
+        client.put(f"/api/resources/{hall['id']}", headers=admin, json={
+            "name": hall["name"], "type": hall["type"], "location": hall["location"], "capacity": 100,
+            "facilities": hall["facilities"], "description": hall["description"]
+        })
+
+    def test_migration_adds_resource_columns(self):
+        """
+        Databases created before facilities/description existed get the columns added.
+        """
+        from sqlalchemy import create_engine, inspect, text
+        import main
+        old_db = os.path.join(tempfile.mkdtemp(), "old.db")
+        eng = create_engine(f"sqlite:///{old_db}")
+        with eng.begin() as conn:
+            conn.execute(text("CREATE TABLE resources (id INTEGER PRIMARY KEY, name TEXT, type TEXT, location TEXT, capacity INTEGER, tenant_id INTEGER)"))
+        main.run_migrations(eng)
+        main.run_migrations(eng)  # running twice is harmless
+        cols = {c["name"] for c in inspect(eng).get_columns("resources")}
+        self.assertTrue({"facilities", "description"} <= cols)
+        eng.dispose()
+
 if __name__ == "__main__":
     unittest.main()

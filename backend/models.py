@@ -39,7 +39,9 @@ class Resource(Base):
     name = Column(String, index=True, nullable=False)
     type = Column(String, nullable=False)  # 'Lab', 'Hall', 'Court', 'Equipment'
     location = Column(String, nullable=False)
-    capacity = Column(Integer, nullable=False)
+    capacity = Column(Integer, nullable=False)  # number of seats / people
+    facilities = Column(Text, nullable=True)  # JSON list of strings, e.g. ["Projector", "Whiteboard"]
+    description = Column(Text, nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
 
     tenant = relationship("Tenant", back_populates="resources")

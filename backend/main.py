@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import datetime
+import json
 import os
 from pydantic import BaseModel, Field
+from sqlalchemy import inspect, text
 
 import models, auth, database, conflict, audit
 from database import engine, get_db
@@ -13,6 +15,19 @@ from auth import RequireRole, get_current_user
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
+
+def run_migrations(bind) -> None:
+    """
+    create_all() only creates missing tables, so columns added to existing tables
+    are applied here. Every step is additive and safe to run on each startup.
+    """
+    existing = {c["name"] for c in inspect(bind).get_columns("resources")}
+    with bind.begin() as conn:
+        for column in ("facilities", "description"):
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE resources ADD COLUMN {column} TEXT"))
+
+run_migrations(engine)
 
 app = FastAPI(title="EazyHall API")
 
@@ -78,6 +93,56 @@ class ResourceCreate(BaseModel):
     type: str = Field(min_length=1, max_length=50)
     location: str = Field(min_length=1, max_length=100)
     capacity: int = Field(gt=0)
+    facilities: List[str] = Field(default_factory=list, max_length=30)
+    description: Optional[str] = Field(default=None, max_length=1000)
+
+# Facilities and descriptions for the seeded resources (also backfilled into older databases)
+DEFAULT_RESOURCE_DETAILS = {
+    "Ada Lovelace Lab": (
+        ["40 workstations", "Projector & screen", "Whiteboard", "Air conditioning", "High-speed Wi-Fi"],
+        "Teaching lab with networked workstations for programming classes and workshops."
+    ),
+    "Turing Seminar Hall": (
+        ["Projector & screen", "PA system", "Wireless microphones", "Video conferencing", "Air conditioning", "Stage"],
+        "Tiered seminar hall for guest lectures, seminars and department meetings."
+    ),
+    "VR Research Kit": (
+        ["5 VR headsets", "Motion tracking", "Rendering PC"],
+        "Portable virtual-reality kit for research projects and demos."
+    ),
+    "Main Sports Arena": (
+        ["Indoor court", "Spectator seating", "Electronic scoreboard", "Changing rooms", "PA system"],
+        "Multi-sport indoor arena for matches, tournaments and events."
+    ),
+    "Squash Court A": (
+        ["Glass back wall", "Racket rental", "Changing rooms"],
+        "Standard singles squash court."
+    ),
+    "High-Performance Gym": (
+        ["Free weights", "Cardio machines", "Lockers", "Trainer on request"],
+        "Strength and conditioning gym for teams and individual training."
+    ),
+}
+
+def clean_facilities(items: List[str]) -> List[str]:
+    # Trim, drop blanks and duplicates, keep the admin's order
+    cleaned = []
+    for item in items:
+        item = item.strip()[:60]
+        if item and item.lower() not in (c.lower() for c in cleaned):
+            cleaned.append(item)
+    return cleaned
+
+def resource_to_dict(r: Resource) -> dict:
+    return {
+        "id": r.id,
+        "name": r.name,
+        "type": r.type,
+        "location": r.location,
+        "capacity": r.capacity,
+        "facilities": json.loads(r.facilities) if r.facilities else [],
+        "description": r.description or "",
+    }
 
 class BookingCreate(BaseModel):
     resource_id: int
@@ -133,6 +198,14 @@ def seed_data():
 
             db.commit()
             print("Database seeded successfully.")
+
+        # Fill in facilities/descriptions for seeded resources that don't have any yet
+        for resource in db.query(Resource).filter(Resource.facilities.is_(None)).all():
+            details = DEFAULT_RESOURCE_DETAILS.get(resource.name)
+            if details:
+                resource.facilities = json.dumps(details[0])
+                resource.description = resource.description or details[1]
+        db.commit()
 
         # Production: make sure every department has an admin, using ADMIN_PASSWORD
         if not DEMO_MODE:
@@ -322,7 +395,50 @@ def create_user(req: UserCreate, current_user: User = Depends(RequireRole(["Admi
 @app.get("/api/resources")
 def get_resources(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # Logical isolation by tenant
-    return db.query(Resource).filter(Resource.tenant_id == current_user.tenant_id).all()
+    resources = db.query(Resource).filter(Resource.tenant_id == current_user.tenant_id).order_by(Resource.name).all()
+    return [resource_to_dict(r) for r in resources]
+
+def get_tenant_resource(db: Session, resource_id: int, tenant_id: int) -> Resource:
+    resource = db.query(Resource).filter(Resource.id == resource_id, Resource.tenant_id == tenant_id).first()
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found in your department")
+    return resource
+
+@app.get("/api/resources/{resource_id}")
+def get_resource(resource_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return resource_to_dict(get_tenant_resource(db, resource_id, current_user.tenant_id))
+
+@app.get("/api/resources/{resource_id}/schedule")
+def get_resource_schedule(resource_id: int, start: str, end: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Active (Pending/Approved) bookings of one resource that overlap [start, end).
+    Used for the weekly timetable.
+    """
+    resource = get_tenant_resource(db, resource_id, current_user.tenant_id)
+    try:
+        start_dt = parse_client_datetime(start)
+        end_dt = parse_client_datetime(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date-time format")
+    if end_dt <= start_dt or end_dt - start_dt > datetime.timedelta(days=62):
+        raise HTTPException(status_code=400, detail="Range must be positive and at most 62 days")
+
+    bookings = db.query(Booking).filter(
+        Booking.resource_id == resource.id,
+        Booking.status.in_(["Pending", "Approved"]),
+        Booking.start_time < end_dt,
+        Booking.end_time > start_dt
+    ).order_by(Booking.start_time).all()
+    return [{
+        "id": b.id,
+        "start_time": utc_iso(b.start_time),
+        "end_time": utc_iso(b.end_time),
+        "purpose": b.purpose,
+        "status": b.status,
+        "user_id": b.user_id,
+        "username": b.user.username,
+        "user_role": b.user.role,
+    } for b in bookings]
 
 @app.post("/api/resources")
 def create_resource(req: ResourceCreate, current_user: User = Depends(RequireRole(["Admin"])), db: Session = Depends(get_db)):
@@ -331,6 +447,8 @@ def create_resource(req: ResourceCreate, current_user: User = Depends(RequireRol
         type=req.type,
         location=req.location,
         capacity=req.capacity,
+        facilities=json.dumps(clean_facilities(req.facilities)),
+        description=(req.description or "").strip() or None,
         tenant_id=current_user.tenant_id
     )
     db.add(resource)
@@ -345,7 +463,28 @@ def create_resource(req: ResourceCreate, current_user: User = Depends(RequireRol
         action="CREATE_RESOURCE",
         details={"resource_id": resource.id, "name": resource.name, "type": resource.type}
     )
-    return resource
+    return resource_to_dict(resource)
+
+@app.put("/api/resources/{resource_id}")
+def update_resource(resource_id: int, req: ResourceCreate, current_user: User = Depends(RequireRole(["Admin"])), db: Session = Depends(get_db)):
+    resource = get_tenant_resource(db, resource_id, current_user.tenant_id)
+    resource.name = req.name
+    resource.type = req.type
+    resource.location = req.location
+    resource.capacity = req.capacity
+    resource.facilities = json.dumps(clean_facilities(req.facilities))
+    resource.description = (req.description or "").strip() or None
+    db.commit()
+    db.refresh(resource)
+
+    audit.add_audit_log(
+        db=db,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        action="UPDATE_RESOURCE",
+        details={"resource_id": resource.id, "name": resource.name, "capacity": resource.capacity}
+    )
+    return resource_to_dict(resource)
 
 # --- Bookings ---
 @app.get("/api/bookings")
