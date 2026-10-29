@@ -63,7 +63,7 @@ export default function LoginPage({ tenantCode, onTenantChange, demoMode, themeP
     <div className="auth">
       <aside className="auth-brand">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div className="brand-mark">E</div>
+          <img src="/logo.png" alt="" className="brand-logo" style={{ width: 40, height: 40 }} />
           <span className="brand-name" style={{ fontSize: '1.15rem' }}>EazyHall</span>
         </div>
         <div>

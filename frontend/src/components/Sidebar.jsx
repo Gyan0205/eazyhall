@@ -25,7 +25,7 @@ export default function Sidebar({
       <div className={`backdrop${open ? ' open' : ''}`} onClick={onClose} aria-hidden="true" />
       <aside className={`sidebar${open ? ' open' : ''}`} aria-label="Main navigation">
         <div className="sidebar-brand">
-          <div className="brand-mark">E</div>
+          <img src="/logo.png" alt="" className="brand-logo" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="brand-name">EazyHall</div>
             <div className="brand-sub">{departmentName}</div>

@@ -210,7 +210,7 @@ function App() {
           <button type="button" className="btn btn-ghost icon-btn" aria-label="Open menu" onClick={() => setNavOpen(true)}>
             <Menu />
           </button>
-          <div className="brand-mark" style={{ width: 28, height: 28, fontSize: '0.85rem' }}>E</div>
+          <img src="/logo.png" alt="" className="brand-logo" style={{ width: 30, height: 30 }} />
           <span className="brand-name">EazyHall</span>
           <button type="button" className="btn btn-ghost icon-btn" aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`} onClick={() => navigate('notifications')} style={{ position: 'relative' }}>
             <Bell />
